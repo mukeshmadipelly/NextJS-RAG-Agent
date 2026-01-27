@@ -61,7 +61,18 @@ export default function MessageList({ messages, streaming }: { messages: Message
           >
             {msg.sender === "agent" ? (
               <div className="chat-markdown">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeAgentText(msg.text)}</ReactMarkdown>
+                {msg.text === "" && streaming && idx === messages.length - 1 ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-pulse">Thinking </div>
+                    <div className="flex gap-1">
+                      <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-1 h-1 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
+                  </div>
+                ) : (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeAgentText(msg.text)}</ReactMarkdown>
+                )}
               </div>
             ) : (
               <span className="whitespace-pre-wrap">{msg.text}</span>
