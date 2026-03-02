@@ -18,7 +18,41 @@ function normalizeAgentText(text: string) {
     return withNewlines.startsWith("- ") ? withNewlines : withNewlines.replace(/^\n- /, "- ");
   }
 
-  return t;
+  // Fix missing bullets: If lines have colons and look like features but no bullets
+  const lines = t.split('\n');
+  const fixedLines: string[] = [];
+  let inFeatureList = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Detect start of feature list
+    if (trimmed.toLowerCase().includes('features') && trimmed.endsWith(':')) {
+      fixedLines.push(line);
+      inFeatureList = true;
+      continue;
+    }
+
+    // Check if this looks like a feature line without a bullet
+    if (inFeatureList && trimmed && !trimmed.startsWith('-') && !trimmed.startsWith('*')) {
+      // If line has a colon (like "Feature Name: description") or starts with capital
+      if (trimmed.includes(':') || (trimmed[0] && trimmed[0] === trimmed[0].toUpperCase())) {
+        // Add bullet point
+        fixedLines.push(`- ${trimmed}`);
+        continue;
+      }
+    }
+
+    // Stop feature list mode on blank line
+    if (!trimmed && inFeatureList) {
+      inFeatureList = false;
+    }
+
+    fixedLines.push(line);
+  }
+
+  return fixedLines.join('\n');
 }
 
 export default function MessageList({ messages, streaming }: { messages: Message[]; streaming: boolean }) {

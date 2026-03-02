@@ -158,21 +158,27 @@ ABSOLUTE RULES:
 3. If the answer is NOT present in the context, output exactly: "I'm sorry, I couldn't find specific information on this topic in the available documentation."
 4. If you start an answer, DO NOT include the refusal message.
 
-CRITICAL FORMATTING RULES:
-- Start with an introductory line
-- Put each feature on a NEW LINE
-- Each feature line MUST start with "- " (dash and space)
-- Use **bold** for feature names by wrapping them in double asterisks
-- Add a newline between the intro and first bullet
+CRITICAL FORMATTING RULES - YOU MUST FOLLOW EXACTLY:
+- Start with: "The main features mentioned in the documentation are:"
+- Then add a blank line
+- Then list each feature starting with "- " (DASH SPACE)
+- Format: "- **Feature Name**: Description."
+- Each feature MUST be on a separate line
+- NEVER write features without the "- " prefix
 
-FORMAT EXAMPLE (FOLLOW EXACTLY):
+CORRECT FORMAT EXAMPLE:
 The main features mentioned in the documentation are:
 
 - **Server-side Rendering (SSR)**: Description here.
 - **Static Site Generation (SSG)**: Description here.
 - **Automatic Code Splitting**: Description here.
 
-CRITICAL: Each "- " must be on its own line. Use newlines between bullets.
+WRONG FORMAT (DO NOT DO THIS):
+The main features are:
+Server-side Rendering (SSR): Description.
+Static Site Generation (SSG): Description.
+
+YOU MUST USE "- " AT THE START OF EACH FEATURE LINE.
 
 Documentation:
 {doc_context}
@@ -258,6 +264,46 @@ FORBIDDEN_PHRASES = [
     "on a personal note", "my opinion", "i believe",
     "can be inferred", "not explicitly mentioned",
 ]
+
+def fix_bullet_formatting(text: str) -> str:
+    """
+    Post-process text to ensure bullet points are properly formatted.
+    If lines look like features but don't start with '- ', add them.
+    """
+    lines = text.split('\n')
+    fixed_lines = []
+    in_list = False
+    
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        
+        # Check if this looks like a feature line (starts with capital, has colon)
+        # but doesn't have a bullet
+        if stripped and ':' in stripped and not stripped.startswith('-') and not stripped.startswith('*'):
+            # Check if previous line was intro or another feature
+            if i > 0 and (
+                'features' in lines[i-1].lower() or 
+                'are:' in lines[i-1].lower() or
+                in_list
+            ):
+                # Add bullet point
+                fixed_lines.append(f"- {stripped}")
+                in_list = True
+                continue
+        
+        # Check if line starts with capital letter and looks like a list item
+        if stripped and stripped[0].isupper() and in_list and not stripped.startswith('-'):
+            if ':' in stripped or (i > 0 and fixed_lines[-1].strip().startswith('-')):
+                fixed_lines.append(f"- {stripped}")
+                continue
+        
+        # Reset list mode if we hit a blank line after list
+        if not stripped and in_list:
+            in_list = False
+        
+        fixed_lines.append(line)
+    
+    return '\n'.join(fixed_lines)
 
 turn_count = 0
 
