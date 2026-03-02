@@ -60,6 +60,33 @@ except Exception as e:
 # =====================================================
 # 3. LLM-ASSISTED INTENT CLASSIFIER (ADVISORY ONLY)
 # =====================================================
+def extract_eli_age(question: str) -> int | None:
+    """
+    Extract age from ELI (Explain Like I'm) queries.
+    Examples: "eli5", "eli 10", "explain like i'm 5", "explain like im 12 years old"
+    Returns the age as integer, or None if not found.
+    """
+    import re
+    q = question.lower()
+    
+    # Pattern 1: "eli5", "eli 10", "eli12"
+    match = re.search(r'\beli\s*(\d+)', q)
+    if match:
+        return int(match.group(1))
+    
+    # Pattern 2: "explain like i'm 5", "explain like im 10 years old"
+    match = re.search(r"explain\s+like\s+i'?m\s+(\d+)", q)
+    if match:
+        return int(match.group(1))
+    
+    # Pattern 3: "for a 5 year old", "for 10 years old"
+    match = re.search(r'for\s+(?:a\s+)?(\d+)\s+year', q)
+    if match:
+        return int(match.group(1))
+    
+    return None
+
+
 def llm_classify_intent(question: str) -> str:
     prompt = f"""
 Classify the user's intent into EXACTLY ONE label.
@@ -122,7 +149,7 @@ def detect_intent(question: str) -> str:
     if any(k in q for k in ["feature", "features", "benefits", "advantages", "pros"]):
         return "FEATURES"
 
-    if any(k in q for k in ["hi", "hello", "hey", "greetings"]):
+    if any(k in q for k in ["hi", "hello", "greetings"]):
         return "GREETING"
 
     if any(k in q for k in ["why", "purpose", "reason", "how does"]):
@@ -148,6 +175,52 @@ def detect_intent(question: str) -> str:
 # =====================================================
 # 5. PROMPTS
 # =====================================================
+def eli_prompt(doc_context: str, question: str, age: int) -> str:
+    """
+    Prompt for ELI (Explain Like I'm X) queries.
+    Adjusts complexity based on age.
+    """
+    if age <= 5:
+        complexity = "very simple words, short sentences, and fun examples"
+        tone = "friendly and playful"
+    elif age <= 10:
+        complexity = "simple language with relatable examples"
+        tone = "encouraging and clear"
+    elif age <= 15:
+        complexity = "straightforward language with practical examples"
+        tone = "helpful and approachable"
+    else:
+        complexity = "clear language without jargon"
+        tone = "conversational and accessible"
+    
+    return f"""
+You are explaining technical concepts to someone who is {age} years old.
+
+RULES:
+1. Use ONLY the provided documentation.
+2. Explain using {complexity}.
+3. Use analogies and real-world examples appropriate for a {age}-year-old.
+4. Keep the {tone} tone.
+5. Break down complex ideas into simple steps.
+6. If the concept is too advanced, explain the basics first.
+7. If info is insufficient, say: "I'm sorry, I couldn't find specific information on this topic in the available documentation."
+
+FORMAT:
+- Start with a simple, relatable introduction
+- Use short paragraphs
+- Include examples or analogies
+- Avoid technical jargon unless you explain it simply
+
+Documentation:
+{doc_context}
+
+Question (from someone who is {age} years old):
+{question}
+
+Simple explanation:
+"""
+
+
 def features_prompt(doc_context, question):
     return f"""
 You are a documentation-grounded assistant.
@@ -326,6 +399,28 @@ def agent_response_stream(question: str) -> Iterator[Dict[str, str]]:
         yield {"type": "refusal", "text": refuse()}
         return
 
+    # Check for ELI (Explain Like I'm) queries
+    eli_age = extract_eli_age(cleaned_question)
+    
+    # Remove ELI syntax from the actual question for better retrieval
+    if eli_age:
+        import re
+        # Remove "eli5", "eli 10", etc.
+        cleaned_for_retrieval = re.sub(r'\beli\s*\d+\b', '', lowered, flags=re.IGNORECASE)
+        # Remove "explain like i'm X"
+        cleaned_for_retrieval = re.sub(r"explain\s+like\s+i'?m\s+\d+(?:\s+years?\s+old)?", '', cleaned_for_retrieval, flags=re.IGNORECASE)
+        # Remove "for a X year old"
+        cleaned_for_retrieval = re.sub(r'for\s+(?:a\s+)?\d+\s+years?\s+old', '', cleaned_for_retrieval, flags=re.IGNORECASE)
+        cleaned_for_retrieval = cleaned_for_retrieval.strip()
+        
+        # Use cleaned version for retrieval if it's not empty
+        if cleaned_for_retrieval:
+            retrieval_question = cleaned_for_retrieval
+        else:
+            retrieval_question = cleaned_question
+    else:
+        retrieval_question = cleaned_question
+
     intent = detect_intent(cleaned_question)
 
     if intent == "FORBIDDEN":
@@ -337,7 +432,7 @@ def agent_response_stream(question: str) -> Iterator[Dict[str, str]]:
     else:
         try:
             doc_results = doc_collection.query(
-                query_texts=[cleaned_question],
+                query_texts=[retrieval_question],
                 n_results=1
             )
         except Exception as exc:
@@ -355,7 +450,10 @@ def agent_response_stream(question: str) -> Iterator[Dict[str, str]]:
             yield {"type": "refusal", "text": refuse()}
             return
 
-    if intent == "FEATURES":
+    # Choose prompt based on ELI age or intent
+    if eli_age:
+        agent_prompt = eli_prompt(doc_context, cleaned_question, eli_age)
+    elif intent == "FEATURES":
         agent_prompt = features_prompt(doc_context, cleaned_question)
     elif intent == "DERIVED_EXPLANATION":
         agent_prompt = derived_prompt(doc_context, cleaned_question)
