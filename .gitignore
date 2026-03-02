@@ -19,3 +19,6 @@ ui/.env.production.local
 
 # ChromaDB (large binary data)
 chroma_store/
+
+# App DB (chat persistence)
+ragbot.sqlite3

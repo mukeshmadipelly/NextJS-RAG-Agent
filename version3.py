@@ -1,3 +1,4 @@
+import os
 import chromadb
 from chromadb.utils import embedding_functions
 import requests
@@ -9,16 +10,16 @@ from typing import Dict, Iterator
 # 0. HARD REFUSAL (SINGLE SOURCE OF TRUTH)
 # =====================================================
 def refuse() -> str:
-    return "I don't know based on the provided documentation."
+    return "I'm sorry, I couldn't find specific information on this topic in the available documentation."
 
 # =====================================================
 # 1. SETUP
 # =====================================================
 embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
+    model_name=os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 )
 
-client = chromadb.PersistentClient(path="./chroma_store")
+client = chromadb.PersistentClient(path=os.getenv("CHROMA_PATH", "./chroma_store"))
 
 doc_collection = client.get_collection(
     name="nextjs_rag",
@@ -39,15 +40,22 @@ META_BLOCK = [
 # =====================================================
 # 2. WARM UP OLLAMA (PERFORMANCE)
 # =====================================================
-requests.post(
-    "http://localhost:11434/api/generate",
-    json={
-        "model": "mistral",
-        "prompt": "warm up",
-        "num_predict": 1,
-        "stream": False
-    }
-)
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+
+try:
+    requests.post(
+        f"{OLLAMA_URL}/api/generate",
+        json={
+            "model": OLLAMA_MODEL,
+            "prompt": "warm up",
+            "num_predict": 1,
+            "stream": False
+        },
+        timeout=120,
+    )
+except Exception as e:
+    print(f"[WARN] Ollama warm-up failed ({e}). The model will be loaded on first request.")
 
 # =====================================================
 # 3. LLM-ASSISTED INTENT CLASSIFIER (ADVISORY ONLY)
@@ -60,6 +68,7 @@ Allowed labels:
 - FACT
 - FEATURES
 - DERIVED
+- GREETING
 - META
 - FORBIDDEN
 
@@ -76,14 +85,14 @@ Label:
 """
     try:
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            f"{OLLAMA_URL}/api/generate",
             json={
-                "model": "mistral",
+                "model": OLLAMA_MODEL,
                 "prompt": prompt,
-                "num_predict": 5,
+                "num_predict": 1,
                 "stream": False
             },
-            timeout=15
+            timeout=60
         )
         return response.json().get("response", "").strip().upper()
     except Exception:
@@ -113,6 +122,9 @@ def detect_intent(question: str) -> str:
     if any(k in q for k in ["feature", "features", "benefits", "advantages", "pros"]):
         return "FEATURES"
 
+    if any(k in q for k in ["hi", "hello", "hey", "greetings"]):
+        return "GREETING"
+
     if any(k in q for k in ["why", "purpose", "reason", "how does"]):
         return "DERIVED_EXPLANATION"
 
@@ -128,6 +140,8 @@ def detect_intent(question: str) -> str:
         return "DERIVED_EXPLANATION"
     if llm_intent == "FACT":
         return "FACT_LOOKUP"
+    if llm_intent == "GREETING":
+        return "GREETING"
 
     return "FORBIDDEN"
 
@@ -139,18 +153,26 @@ def features_prompt(doc_context, question):
 You are a documentation-grounded assistant.
 
 ABSOLUTE RULES:
-- Use ONLY the provided documentation.
-- No pretrained or outside knowledge.
-- Every bullet must be explicitly supported by the text.
+1. Use ONLY the provided documentation.
+2. Every bullet must be explicitly supported by the text.
+3. If the answer is NOT present in the context, output exactly: "I'm sorry, I couldn't find specific information on this topic in the available documentation."
+4. If you start an answer, DO NOT include the refusal message.
 
-If the answer is not present, reply EXACTLY:
-"I don't know based on the provided documentation."
+CRITICAL FORMATTING RULES:
+- Start with an introductory line
+- Put each feature on a NEW LINE
+- Each feature line MUST start with "- " (dash and space)
+- Use **bold** for feature names by wrapping them in double asterisks
+- Add a newline between the intro and first bullet
 
-FORMAT (MANDATORY):
+FORMAT EXAMPLE (FOLLOW EXACTLY):
 The main features mentioned in the documentation are:
-- Feature one.
-- Feature two.
-- Feature three.
+
+- **Server-side Rendering (SSR)**: Description here.
+- **Static Site Generation (SSG)**: Description here.
+- **Automatic Code Splitting**: Description here.
+
+CRITICAL: Each "- " must be on its own line. Use newlines between bullets.
 
 Documentation:
 {doc_context}
@@ -166,16 +188,25 @@ def derived_prompt(doc_context, question):
 You are a documentation-grounded assistant.
 
 Rules:
-- Use ONLY the documentation.
-- Logical combination is allowed.
-- No inference beyond the text.
+1. Use ONLY the documentation.
+2. Logical combination is allowed. No inference beyond the text.
+3. If info is insufficient, output exactly: "I'm sorry, I couldn't find specific information on this topic in the available documentation."
+4. If you start an answer, DO NOT include the refusal message.
 
-If insufficient info, reply EXACTLY:
-"I don't know based on the provided documentation."
+CRITICAL FORMATTING RULES:
+- Start with: "Based on the provided documentation, it can be derived that:"
+- Put each point on a NEW LINE
+- Each point MUST start with "- " (dash and space)
+- Use **bold** for key terms by wrapping them in double asterisks
+- Add a newline between the intro and first bullet
 
-FORMAT:
-Start EXACTLY with:
-"Based on the provided documentation, it can be derived that:"
+FORMAT EXAMPLE:
+Based on the provided documentation, it can be derived that:
+
+- **Point one**: Description here.
+- **Point two**: Description here.
+
+CRITICAL: Each "- " must be on its own line. Use newlines between bullets.
 
 Documentation:
 {doc_context}
@@ -191,10 +222,9 @@ def fact_prompt(doc_context, question):
 You are a documentation-grounded assistant.
 
 Rules:
-- Use ONLY the documentation.
-- No explanation or commentary.
-- If not explicitly present, reply EXACTLY:
-"I don't know based on the provided documentation."
+1. Use ONLY the documentation.
+2. If the fact is not present, output exactly: "I'm sorry, I couldn't find specific information on this topic in the available documentation."
+3. If you start an answer, DO NOT include the refusal message.
 
 Documentation:
 {doc_context}
@@ -205,13 +235,27 @@ Question:
 Answer:
 """
 
+def greeting_prompt(question):
+    return f"""
+You are a senior Next.js RAG Chatbot. 
+
+RULES:
+- Be friendly, professional, and welcoming.
+- Introduce yourself briefly as the "Next.js RAG Assistant".
+- State your capabilities: You can answer questions based on specific Next.js documentation using Retrieval-Augmented Generation (RAG).
+- Keep the response concise.
+
+User Greeting:
+{question}
+
+Answer:
+"""
+
 # =====================================================
 # 6. POST-GENERATION SECURITY FILTER
 # =====================================================
 FORBIDDEN_PHRASES = [
-    "however", "on a personal note", "it's important to note",
-    "generally", "typically", "commonly",
-    "might", "could", "recommend", "suggest",
+    "on a personal note", "my opinion", "i believe",
     "can be inferred", "not explicitly mentioned",
 ]
 
@@ -242,41 +286,50 @@ def agent_response_stream(question: str) -> Iterator[Dict[str, str]]:
         yield {"type": "refusal", "text": refuse()}
         return
 
-    try:
-        doc_results = doc_collection.query(
-            query_texts=[cleaned_question],
-            n_results=1
-        )
-    except Exception as exc:
-        yield {"type": "error", "text": f"Retrieval error: {exc}"}
-        return
+    if intent == "GREETING":
+        doc_context = "" # No context needed for simple greeting
+    else:
+        try:
+            doc_results = doc_collection.query(
+                query_texts=[cleaned_question],
+                n_results=1
+            )
+        except Exception as exc:
+            yield {"type": "error", "text": f"Retrieval error: {exc}"}
+            return
 
-    documents = doc_results.get("documents") or [[]]
-    if not documents[0]:
-        yield {"type": "refusal", "text": refuse()}
-        return
+        documents = doc_results.get("documents") or [[]]
+        if not documents[0]:
+            yield {"type": "refusal", "text": refuse()}
+            return
 
-    doc_context = documents[0][0][:900]
+        doc_context = documents[0][0][:900]
 
-    if len(doc_context.strip()) < 200:
-        yield {"type": "refusal", "text": refuse()}
-        return
+        if len(doc_context.strip()) < 200:
+            yield {"type": "refusal", "text": refuse()}
+            return
 
     if intent == "FEATURES":
         agent_prompt = features_prompt(doc_context, cleaned_question)
     elif intent == "DERIVED_EXPLANATION":
         agent_prompt = derived_prompt(doc_context, cleaned_question)
+    elif intent == "GREETING":
+        agent_prompt = greeting_prompt(cleaned_question)
     else:
         agent_prompt = fact_prompt(doc_context, cleaned_question)
 
     try:
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            f"{OLLAMA_URL}/api/generate",
             json={
-                "model": "mistral",
+                "model": OLLAMA_MODEL,
                 "prompt": agent_prompt,
                 "stream": True,
-                "num_predict": 300
+                "num_predict": 500,
+                "num_ctx": 4096,
+                "temperature": 0.4,
+                "top_k": 20,
+                "top_p": 0.8
             },
             stream=True,
             timeout=None
@@ -327,9 +380,9 @@ Memory:
 
         try:
             mem_response = requests.post(
-                "http://localhost:11434/api/generate",
+                f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": "mistral",
+                    "model": OLLAMA_MODEL,
                     "prompt": memory_prompt,
                     "num_predict": 60,
                     "stream": False

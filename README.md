@@ -136,10 +136,23 @@ NextJS-RAG-Agent/
 
 ### Environment Variables
 
-The application uses default configurations. You can modify these in the respective files:
+The application uses sensible defaults, but for production you should use environment variables.
+Sample env files are provided:
 
-- **Backend**: `backend/main.py` - Ollama server URL and model settings
-- **Frontend**: `ui/src/app/api/stream/route.ts` - Backend API URL
+- `example.env` (backend)
+- `ui/example.env` (frontend)
+
+Copy them to `.env` / `ui/.env.local` and adjust values as needed.
+
+- **Backend**
+  - `RAG_BOT_DB_URL`: database URL (defaults to local SQLite: `sqlite:///./ragbot.sqlite3`)
+  - `OLLAMA_URL`: Ollama base URL (defaults to `http://localhost:11434`)
+  - `OLLAMA_MODEL`: model name (defaults to `mistral`)
+  - `CHROMA_PATH`: Chroma storage path (defaults to `./chroma_store`)
+  - `EMBEDDING_MODEL`: sentence-transformer model (defaults vary by script)
+
+- **Frontend**
+  - `BACKEND_URL`: FastAPI backend URL used by Next.js API route handlers (defaults to `http://127.0.0.1:8000`)
 
 ### Customization
 
@@ -172,8 +185,14 @@ The application uses default configurations. You can modify these in the respect
 ## 🌐 API Endpoints
 
 ### Backend (FastAPI)
-- `GET /` - Health check endpoint
+- `GET /health` - Health check endpoint
 - `POST /stream` - Streaming chat endpoint
+- `GET /chats` - List chats (with messages)
+- `POST /chats` - Create a chat
+- `PUT /chats/{chat_id}` - Rename a chat
+- `DELETE /chats/{chat_id}` - Delete a chat
+- `POST /chats/{chat_id}/messages` - Add a message to a chat (user/agent)
+- `DELETE /chats/{chat_id}/messages` - Clear messages for a chat
 
 ### Frontend (Next.js API Routes)
 - `POST /api/stream` - Proxy to backend streaming endpoint

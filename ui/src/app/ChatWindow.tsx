@@ -11,6 +11,20 @@ export default function ChatWindow() {
   const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
   const { startStream, stopStream } = useChatStream();
 
+  const persistMessage = async (chatId: string, sender: "user" | "agent", text: string) => {
+    if (chatId === "local") return;
+    try {
+      await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender, text }),
+        cache: "no-store",
+      });
+    } catch (e) {
+      console.error("Failed to persist message:", e);
+    }
+  };
+
   // Send user message and start streaming agent response
   const handleSend = (msg: string) => {
     const chatId = activeChatId;
@@ -23,10 +37,16 @@ export default function ChatWindow() {
     setStreaming(true);
     setStreamingChatId(chatId);
 
+    // Persist the user's message immediately (best-effort)
+    void persistMessage(chatId, "user", msg);
+
     // Stream agent response
+    let agentText = "";
+    let persistedAgent = false;
     startStream(
       msg,
       (token) => {
+        agentText += token;
         updateMessagesByChatId(chatId, (msgs) => {
           const last = msgs[msgs.length - 1];
           if (last?.sender === "agent") {
@@ -38,10 +58,18 @@ export default function ChatWindow() {
       () => {
         setStreaming(false);
         setStreamingChatId(null);
+        if (!persistedAgent) {
+          persistedAgent = true;
+          void persistMessage(chatId, "agent", agentText);
+        }
       },
       () => {
         setStreaming(false);
         setStreamingChatId(null);
+        if (!persistedAgent && agentText.trim()) {
+          persistedAgent = true;
+          void persistMessage(chatId, "agent", agentText);
+        }
       }
     );
   };

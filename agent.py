@@ -1,3 +1,4 @@
+import os
 import chromadb
 from chromadb.utils import embedding_functions
 import requests
@@ -8,10 +9,13 @@ from datetime import datetime, timezone
 # 1. Setup Embeddings
 # ----------------------------------------
 embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-mpnet-base-v2"
+    model_name=os.getenv("EMBEDDING_MODEL", "all-mpnet-base-v2")
 )
 
-client = chromadb.PersistentClient(path="./chroma_store")
+client = chromadb.PersistentClient(path=os.getenv("CHROMA_PATH", "./chroma_store"))
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 
 # ----------------------------------------
 # 2. Load Knowledge Memory (RAG documents)
@@ -84,7 +88,16 @@ STRICT RULES:
 ANSWER RULES:
 - Be detailed and developer-friendly.
 - If the question asks for features, benefits, or overview:
-  - Answer using bullet points.
+  - Answer using bullet points on separate lines.
+  - CRITICAL: Each bullet point MUST start with "- " (dash and space) on a NEW LINE.
+  - Use **bold** for feature names by wrapping them in double asterisks.
+  - Example format:
+  
+The main features are:
+
+- **Server-side Rendering**: Description here.
+- **Static Generation**: Description here.
+
 - Include code examples ONLY if they appear in the context.
 
 Conversation Memory:
@@ -105,9 +118,9 @@ Answer:
     print("\n🤖 Agent:\n")
 
     response = requests.post(
-        "http://localhost:11434/api/generate",
+        f"{OLLAMA_URL}/api/generate",
         json={
-            "model": "mistral",
+            "model": OLLAMA_MODEL,
             "prompt": agent_prompt,
             "stream": True
         },
@@ -151,9 +164,9 @@ Memory:
 """
 
     memory_response = requests.post(
-        "http://localhost:11434/api/generate",
+        f"{OLLAMA_URL}/api/generate",
         json={
-            "model": "mistral",
+            "model": OLLAMA_MODEL,
             "prompt": memory_prompt,
             "stream": False
         },

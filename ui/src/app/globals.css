@@ -23,10 +23,22 @@
 .chat-markdown ol {
   margin: 0.5rem 0;
   padding-left: 1.25rem;
+  list-style-type: disc;
 }
 
 .chat-markdown li {
-  margin: 0.15rem 0;
+  margin: 0.25rem 0;
+  line-height: 1.5;
+}
+
+.chat-markdown strong {
+  font-weight: 700;
+  color: inherit;
+}
+
+.dark .chat-markdown strong {
+  font-weight: 700;
+  color: #f3f4f6;
 }
 
 .chat-markdown code {
